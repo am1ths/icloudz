@@ -1,0 +1,13 @@
+Source: icloudz
+Section: utils
+Priority: optional
+Maintainer: Timofei Shabalin <timshab@icloud.com>
+Build-Depends: debhelper-compat (= 13), dh-virtualenv (>= 1.2), python3-all, python3-pip, python3-venv
+Standards-Version: 4.6.2
+
+Package: icloudz
+Architecture: any
+Depends: ${misc:Depends}, python3 (>= 3.10)
+Description: iCloud Drive sync daemon for Linux
+ Bidirectional sync with a background daemon, watchdog for instant
+ local uploads, and systemd integration.
