@@ -428,7 +428,9 @@ Wants=network-online.target
 Type=simple
 ExecStart={exe} start --foreground
 Restart=on-failure
-RestartSec=10
+RestartSec=60
+StartLimitIntervalSec=600
+StartLimitBurst=3
 StandardOutput=journal
 StandardError=journal
 

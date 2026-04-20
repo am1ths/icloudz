@@ -159,6 +159,31 @@ def _poll_remote(api, local_dir: Path, remote_path: str, pair_name: str = "defau
     return pulled
 
 
+_FATAL_AUTH_MSGS = ("No password found", "Apple ID not set", "Invalid email/password")
+_AUTH_RETRY_DELAYS = [30, 60, 120, 300, 600]
+
+
+def _get_api_with_retry(apple_id: str | None, stop_event: threading.Event):
+    """Try to authenticate, retrying on transient errors (503, 421).
+    Returns None if stop_event is set or a permanent credential error occurs."""
+    for delay in _AUTH_RETRY_DELAYS + [None]:
+        try:
+            return get_api(apple_id)
+        except RuntimeError as e:
+            msg = str(e)
+            if any(m in msg for m in _FATAL_AUTH_MSGS):
+                log.error("authentication failed (credentials): %s", e)
+                return None
+            if delay is None:
+                log.error("authentication failed after all retries: %s", e)
+                return None
+            log.warning("authentication failed (%s), retrying in %ds...", msg, delay)
+            write_status({"last_error": msg, "backoff": delay})
+            if stop_event.wait(timeout=delay):
+                return None
+    return None
+
+
 def _parse_mtime(date_str: str) -> float:
     try:
         dt = datetime.fromisoformat(str(date_str).replace("Z", "+00:00"))
@@ -196,10 +221,8 @@ def run(foreground: bool = False) -> None:
     for p in pairs:
         log.info("  pair %r: %s → %s", p["name"], p["local_dir"], p["remote_path"])
 
-    try:
-        api = get_api(apple_id)
-    except RuntimeError as e:
-        log.error("authentication failed: %s", e)
+    api = _get_api_with_retry(apple_id, stop_event)
+    if api is None:
         _clear_pid()
         sys.exit(1)
 
