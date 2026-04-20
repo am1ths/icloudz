@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "iCloud Drive CLI sync tool"
 requires-python = ">=3.10"
 dependencies = [
-    "pyicloud==1.0.0",
+    "pyicloud==2.5.0",
     "click>=8.1",
     "rich>=13.0",
     "keyring>=24.0",
