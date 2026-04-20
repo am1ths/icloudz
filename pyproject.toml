@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "icloudz"
+version = "0.1.0"
+description = "iCloud Drive CLI sync tool"
+requires-python = ">=3.10"
+dependencies = [
+    "pyicloud==1.0.0",
+    "click>=8.1",
+    "rich>=13.0",
+    "keyring>=24.0",
+    "watchdog>=4.0",
+]
+
+[project.scripts]
+icloudz = "icloudz.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["icloudz"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
