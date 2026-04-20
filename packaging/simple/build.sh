@@ -27,6 +27,13 @@ python3 -m venv "$PKG_DIR/opt/icloudz/venv"
 "$PKG_DIR/opt/icloudz/venv/bin/pip" install --quiet --upgrade pip
 "$PKG_DIR/opt/icloudz/venv/bin/pip" install --quiet "$ROOT"
 
+# Fix shebangs — pip writes the temp build path; rewrite to final install path
+find "$PKG_DIR/opt/icloudz/venv/bin" -maxdepth 1 -type f | while IFS= read -r f; do
+    if head -c 2 "$f" | grep -q '^#!'; then
+        sed -i "1s|^#!.*/python[^ ]*|#!/opt/icloudz/venv/bin/python3|" "$f"
+    fi
+done
+
 # Strip __pycache__ and .dist-info bloat
 find "$PKG_DIR/opt/icloudz/venv" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
