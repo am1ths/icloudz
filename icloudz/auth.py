@@ -12,6 +12,28 @@ KEYRING_SERVICE = "icloudz"
 SESSION_DIR = Path.home() / ".config" / "icloudz" / "session"
 ENV_FILE = Path.home() / ".config" / "icloudz" / ".env"
 
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/16.6 Safari/605.1.15"
+)
+
+
+def _patch_pyicloud_ua() -> None:
+    """Inject a browser User-Agent before pyicloud's authenticate() runs."""
+    try:
+        from pyicloud import base as pb
+        _orig = pb.PyiCloudSession.__init__
+        def _patched(self, *a, **kw):
+            _orig(self, *a, **kw)
+            self.headers["User-Agent"] = _BROWSER_UA
+        pb.PyiCloudSession.__init__ = _patched
+    except Exception:
+        pass
+
+
+_patch_pyicloud_ua()
+
 
 def get_api(apple_id: str | None = None) -> PyiCloudService:
     _load_env()
