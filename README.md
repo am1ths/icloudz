@@ -62,6 +62,7 @@ Settings are saved to `~/.config/icloudz/config.json`.
 | `--local-dir` | `~/iCloud` | Local directory (default pair) |
 | `--remote` | `/` | Remote iCloud Drive path (default pair) |
 | `--interval` | `30` | Remote poll interval in seconds |
+| `--max-workers` | `6` | Parallel transfer workers |
 | `--apple-id` | — | Apple ID (overrides .env) |
 | `--conflict` | `newest-wins` | Conflict strategy: `newest-wins`, `remote-wins`, `local-wins` |
 | `--exclude PATTERN` | built-in set | Exclude pattern (repeatable, replaces list) |
@@ -132,6 +133,12 @@ All sync commands accept `--remote` to target a specific iCloud Drive folder:
 
 ```bash
 icloudz pull ~/Documents --remote /Documents
+```
+
+Pass `--pair NAME` to apply the excludes, conflict strategy, and selective paths from a named pair:
+
+```bash
+icloudz sync ~/Docs --pair docs
 ```
 
 ### Status
