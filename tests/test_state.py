@@ -51,6 +51,14 @@ def test_needs_upload_changed(tmp_db):
     assert st.needs_upload("f.txt", 2.0, 100) is True
 
 
+def test_record_local_tracks_uploaded_remote_version(tmp_db):
+    st.record_local("f.txt", 1.0, 100, "abc", remote_mtime=100.0)
+    row = st.get("f.txt")
+    assert row["remote_size"] == 100
+    assert row["remote_mtime"] is not None
+    assert not st.remote_changed("f.txt", row["remote_mtime"], 100)
+
+
 def test_migration_from_old_schema(tmp_db):
     """Simulate an old single-PK schema and verify migration."""
     import sqlite3

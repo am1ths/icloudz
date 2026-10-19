@@ -1,5 +1,6 @@
+import hashlib
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import click
 from rich.console import Console
@@ -46,8 +47,10 @@ def whoami(apple_id):
 @main.command()
 @click.option("--local-dir", "-l", default=None, help="Local directory")
 @click.option("--remote", "-r", default=None, help="Remote iCloud Drive path")
-@click.option("--interval", "-i", default=None, type=int, help="Poll interval in seconds")
-@click.option("--max-workers", "-w", default=None, type=int, help="Parallel transfer workers")
+@click.option("--interval", "-i", default=None, type=click.IntRange(min=1),
+              help="Poll interval in seconds")
+@click.option("--max-workers", "-w", default=None,
+              type=click.IntRange(min=1, max=64), help="Parallel transfer workers")
 @click.option("--apple-id", "-u", default=None, help="Apple ID")
 @click.option("--notify/--no-notify", default=None, help="Desktop notifications")
 @click.option("--conflict", default=None,
@@ -96,9 +99,9 @@ def configure(local_dir, remote, interval, max_workers, apple_id, notify,
     if changed_pair:
         pairs[idx] = pair
         cfg["pairs"] = pairs
-    if interval:
+    if interval is not None:
         cfg["poll_interval"] = interval
-    if max_workers:
+    if max_workers is not None:
         cfg["max_workers"] = max_workers
     if apple_id:
         cfg["apple_id"] = apple_id
@@ -230,6 +233,17 @@ def _load_pair(pair_name: str | None) -> dict:
     return pairs[0] if pairs else {}
 
 
+def _scope_manual_state(pair: dict, local_dir: Path, remote: str) -> None:
+    configured_local = Path(pair.get("local_dir", "")).expanduser().resolve()
+    local = local_dir.expanduser().resolve()
+    configured_remote = str(PurePosixPath(pair.get("remote_path", "/")))
+    actual_remote = str(PurePosixPath(remote))
+    if configured_local != local or configured_remote != actual_remote:
+        scope = f"{pair.get('name', 'default')}\0{local}\0{actual_remote}"
+        digest = hashlib.sha256(scope.encode()).hexdigest()[:16]
+        pair["_state_key"] = f"{pair.get('name', 'default')}:{digest}"
+
+
 @main.command()
 @click.argument("local_dir", type=click.Path(file_okay=False))
 @click.option("--apple-id", "-u", default=None)
@@ -248,6 +262,7 @@ def pull(local_dir, apple_id, remote, pair, dry_run):
     remote = remote or pair_cfg.get("remote_path", "/")
     local = Path(local_dir)
     local.mkdir(parents=True, exist_ok=True)
+    _scope_manual_state(pair_cfg, local, remote)
     try:
         api = get_api(apple_id)
         do_pull(api, remote, local, dry_run=dry_run, pair=pair_cfg)
@@ -272,6 +287,7 @@ def push(local_dir, apple_id, remote, pair, dry_run):
         console.print(f"[red]Error:[/red] {e.format_message()}")
         sys.exit(1)
     remote = remote or pair_cfg.get("remote_path", "/")
+    _scope_manual_state(pair_cfg, Path(local_dir), remote)
     try:
         api = get_api(apple_id)
         do_push(api, Path(local_dir), remote, dry_run=dry_run, pair=pair_cfg)
@@ -298,6 +314,7 @@ def sync(local_dir, apple_id, remote, pair, dry_run):
     remote = remote or pair_cfg.get("remote_path", "/")
     local = Path(local_dir)
     local.mkdir(parents=True, exist_ok=True)
+    _scope_manual_state(pair_cfg, local, remote)
     try:
         api = get_api(apple_id)
         do_sync(api, local, remote, dry_run=dry_run, pair=pair_cfg)
@@ -423,14 +440,14 @@ def _write_systemd_unit() -> None:
 Description=iCloud Drive sync daemon
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
 
 [Service]
 Type=simple
 ExecStart={exe} start --foreground
 Restart=on-failure
 RestartSec=60
-StartLimitIntervalSec=600
-StartLimitBurst=3
 StandardOutput=journal
 StandardError=journal
 

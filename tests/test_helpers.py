@@ -31,6 +31,13 @@ class TestSelective:
     def test_no_match(self):
         assert not _should_include("Photos/img.jpg", ["/Documents"])
 
+    def test_prefix_requires_path_boundary(self):
+        assert not _should_include("DocumentsArchive/file.txt", ["/Documents"])
+
+    def test_absolute_selective_path_under_remote_root(self):
+        from icloudz.filters import should_include
+        assert should_include("Work/report.pdf", ["/Documents/Work"], "/Documents")
+
     def test_multiple_prefixes(self):
         assert _should_include("Desktop/note.txt", ["/Documents", "/Desktop"])
 

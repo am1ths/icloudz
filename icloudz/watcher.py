@@ -1,4 +1,3 @@
-import fnmatch
 import logging
 import threading
 import time
@@ -9,7 +8,8 @@ from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
 
 from . import state as st
-from .drive import upload_file, ensure_remote_dir, delete_remote
+from .drive import upload_file, ensure_remote_dir, delete_remote, safe_local_path
+from .filters import should_exclude, should_include
 
 log = logging.getLogger(__name__)
 
@@ -30,12 +30,14 @@ def mark_poll_done(paths: set[str]) -> None:
 
 class _Handler(FileSystemEventHandler):
     def __init__(self, api, local_dir: Path, remote_path: str,
-                 pair_name: str = "default", excludes: list[str] | None = None):
+                 pair_name: str = "default", excludes: list[str] | None = None,
+                 selective: list[str] | None = None):
         self.api = api
         self.local_dir = local_dir
         self.remote_path = remote_path
         self.pair_name = pair_name
         self.excludes = excludes or []
+        self.selective = selective or []
         self._debounce: dict[str, float] = {}
         self._lock = threading.Lock()
         self._in_flight: set[str] = set()
@@ -47,18 +49,14 @@ class _Handler(FileSystemEventHandler):
         except ValueError:
             return None
 
-    def _excluded(self, rel: str) -> bool:
-        name = PurePosixPath(rel).name
-        return any(fnmatch.fnmatch(name, p) or fnmatch.fnmatch(rel, p) for p in self.excludes)
-
     def _schedule(self, abs_path: str) -> None:
         with self._lock:
             self._debounce[abs_path] = time.monotonic() + 1.5
 
-    def flush(self, pool: ThreadPoolExecutor | None = None) -> None:
+    def flush(self, pool: ThreadPoolExecutor | None = None, force: bool = False) -> None:
         now = time.monotonic()
         with self._lock:
-            ready = [p for p, t in self._debounce.items() if t <= now]
+            ready = [p for p, t in self._debounce.items() if force or t <= now]
             for p in ready:
                 del self._debounce[p]
         if pool:
@@ -75,7 +73,14 @@ class _Handler(FileSystemEventHandler):
         rel = self._rel(abs_path)
         if rel is None:
             return
-        if self._excluded(rel):
+        if should_exclude(rel, self.excludes) or not should_include(
+            rel, self.selective, self.remote_path
+        ):
+            return
+        try:
+            safe_local_path(self.local_dir, rel)
+        except ValueError:
+            log.warning("[%s] refusing path outside sync root: %s", self.pair_name, rel)
             return
         with _poll_lock:
             if rel in _poll_active:
@@ -93,9 +98,13 @@ class _Handler(FileSystemEventHandler):
                 return
             remote_dir = str(PurePosixPath(self.remote_path) / PurePosixPath(rel).parent)
             ensure_remote_dir(self.api, remote_dir)
-            upload_file(self.api, path, remote_dir)
-            checksum = st.file_checksum(path)
-            st.record_local(rel, s.st_mtime, s.st_size, checksum, self.pair_name)
+            uploaded = upload_file(self.api, path, remote_dir)
+            current_stat = path.stat()
+            if current_stat.st_mtime != s.st_mtime or current_stat.st_size != s.st_size:
+                self._schedule(abs_path)
+                return
+            st.record_local(rel, s.st_mtime, s.st_size, uploaded.checksum, self.pair_name,
+                            remote_mtime=uploaded.uploaded_at)
             log.info("[%s] pushed: %s", self.pair_name, rel)
         except FileNotFoundError:
             st.delete(rel, self.pair_name)
@@ -118,34 +127,48 @@ class _Handler(FileSystemEventHandler):
 
     def on_moved(self, event: FileSystemEvent) -> None:
         if not event.is_directory:
+            old_rel = self._rel(event.src_path)
+            if old_rel and should_include(old_rel, self.selective, self.remote_path):
+                self._remove_remote(old_rel)
             self._schedule(event.dest_path)
+
+    def _remove_remote(self, rel: str) -> None:
+        if should_exclude(rel, self.excludes):
+            return
+        record = st.get(rel, self.pair_name)
+        if record and record.get("local_mtime") is not None:
+            full_remote = str(PurePosixPath(self.remote_path) / rel)
+            try:
+                delete_remote(self.api, full_remote)
+                log.info("[%s] deleted from remote: %s", self.pair_name, rel)
+            except Exception as e:
+                log.warning("[%s] remote delete failed for %s: %s", self.pair_name, rel, e)
+                return
+        st.delete(rel, self.pair_name)
 
     def on_deleted(self, event: FileSystemEvent) -> None:
         if not event.is_directory:
             rel = self._rel(event.src_path)
             if rel is None:
                 return
-            record = st.get(rel, self.pair_name)
-            st.delete(rel, self.pair_name)
-            log.info("[%s] untracked (deleted locally): %s", self.pair_name, rel)
-            if record and record.get("remote_mtime"):
-                full_remote = str(PurePosixPath(self.remote_path) / rel)
-                try:
-                    delete_remote(self.api, full_remote)
-                    log.info("[%s] deleted from remote: %s", self.pair_name, rel)
-                except Exception as e:
-                    log.warning("[%s] remote delete failed for %s: %s", self.pair_name, rel, e)
+            if should_exclude(rel, self.excludes) or not should_include(
+                rel, self.selective, self.remote_path
+            ):
+                return
+            self._remove_remote(rel)
 
 
 class LocalWatcher:
     _UPLOAD_WORKERS = 4
 
     def __init__(self, api, local_dir: Path, remote_path: str,
-                 pair_name: str = "default", excludes: list[str] | None = None):
-        self._handler = _Handler(api, local_dir, remote_path, pair_name, excludes)
+                 pair_name: str = "default", excludes: list[str] | None = None,
+                 selective: list[str] | None = None,
+                 max_workers: int = _UPLOAD_WORKERS):
+        self._handler = _Handler(api, local_dir, remote_path, pair_name, excludes, selective)
         self._observer = Observer()
         self._observer.schedule(self._handler, str(local_dir), recursive=True)
-        self._pool = ThreadPoolExecutor(max_workers=self._UPLOAD_WORKERS,
+        self._pool = ThreadPoolExecutor(max_workers=max(1, max_workers),
                                         thread_name_prefix="watcher-upload")
 
     def start(self) -> None:
@@ -153,8 +176,9 @@ class LocalWatcher:
 
     def stop(self) -> None:
         self._observer.stop()
-        self._observer.join(timeout=5)
-        self._pool.shutdown(wait=False)
+        self._observer.join()
+        self._handler.flush(self._pool, force=True)
+        self._pool.shutdown(wait=True)
 
     def flush(self) -> None:
         self._handler.flush(self._pool)

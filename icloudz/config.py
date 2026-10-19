@@ -53,10 +53,20 @@ def _migrate(data: dict) -> dict:
 
 
 def get_pairs(cfg: dict) -> list[dict]:
-    return cfg.get("pairs", [dict(_PAIR_DEFAULTS)])
+    pairs = cfg.get("pairs", [dict(_PAIR_DEFAULTS)])
+    return [
+        {
+            **_PAIR_DEFAULTS,
+            **pair,
+            "local_dir": str(Path(pair.get("local_dir", _PAIR_DEFAULTS["local_dir"]))
+                             .expanduser().resolve()),
+        }
+        for pair in pairs
+    ]
 
 
 def save(cfg: dict) -> None:
+    local_dirs = []
     for pair in cfg.get("pairs", []):
         local_dir = Path(pair.get("local_dir", "")).expanduser()
         if not local_dir.exists():
@@ -64,6 +74,13 @@ def save(cfg: dict) -> None:
                 local_dir.mkdir(parents=True, exist_ok=True)
             except OSError as e:
                 raise ValueError(f"Cannot create local_dir {local_dir}: {e}") from e
+        elif not local_dir.is_dir():
+            raise ValueError(f"local_dir is not a directory: {local_dir}")
+        resolved = local_dir.resolve()
+        if any(resolved == other or resolved.is_relative_to(other)
+               or other.is_relative_to(resolved) for other in local_dirs):
+            raise ValueError(f"Sync local directories overlap: {resolved}")
+        local_dirs.append(resolved)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
 

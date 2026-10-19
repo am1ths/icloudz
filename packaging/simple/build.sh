@@ -13,6 +13,7 @@ with open('$ROOT/pyproject.toml', 'rb') as f:
 ")
 ARCH=$(dpkg --print-architecture)
 STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
 PKG_DIR="$STAGE/${PKG}_${VERSION}_${ARCH}"
 
 echo "Building $PKG $VERSION ($ARCH) — simple venv bundle"
@@ -61,7 +62,7 @@ Description: iCloud Drive sync daemon for Linux
 EOF
 
 # ── Build ─────────────────────────────────────────────────────────────────────
+mkdir -p "$ROOT/dist"
 OUT="$ROOT/dist/${PKG}_${VERSION}_${ARCH}.deb"
 dpkg-deb --build --root-owner-group "$PKG_DIR" "$OUT"
-rm -rf "$STAGE"
 echo "Done: $OUT"

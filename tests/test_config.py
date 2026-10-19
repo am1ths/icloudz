@@ -55,3 +55,16 @@ def test_get_pairs_empty(tmp_config):
     cfg = {"apple_id": None}
     pairs = cfg_mod.get_pairs(cfg)
     assert len(pairs) == 1
+
+
+def test_save_rejects_overlapping_local_directories(tmp_config, tmp_path):
+    root = tmp_path / "sync"
+    cfg = {
+        "pairs": [
+            {"name": "all", "local_dir": str(root)},
+            {"name": "nested", "local_dir": str(root / "nested")},
+        ]
+    }
+
+    with pytest.raises(ValueError, match="overlap"):
+        cfg_mod.save(cfg)

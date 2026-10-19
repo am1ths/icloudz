@@ -35,6 +35,14 @@ def _patch_pyicloud_ua() -> None:
 _patch_pyicloud_ua()
 
 
+def _secure_session_dir() -> None:
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    SESSION_DIR.chmod(0o700)
+    for path in SESSION_DIR.iterdir():
+        if path.is_file():
+            path.chmod(0o600)
+
+
 def get_api(apple_id: str | None = None) -> PyiCloudService:
     _load_env()
     if apple_id is None:
@@ -46,7 +54,7 @@ def get_api(apple_id: str | None = None) -> PyiCloudService:
     if password is None:
         raise RuntimeError(f"No password found for {apple_id}. Run: icloudz login")
 
-    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_session_dir()
     try:
         api = PyiCloudService(apple_id, password, cookie_directory=str(SESSION_DIR))
     except PyiCloudFailedLoginException as e:
@@ -56,13 +64,14 @@ def get_api(apple_id: str | None = None) -> PyiCloudService:
         _handle_2fa(api)
     elif api.requires_2sa:
         _handle_2sa(api)
+    _secure_session_dir()
 
     return api
 
 
 def login(apple_id: str) -> PyiCloudService:
-    password = getpass.getpass(f"Password for {apple_id}: ").strip()
-    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    password = getpass.getpass(f"Password for {apple_id}: ")
+    _secure_session_dir()
 
     try:
         api = PyiCloudService(apple_id, password, cookie_directory=str(SESSION_DIR))
@@ -78,6 +87,7 @@ def login(apple_id: str) -> PyiCloudService:
     elif api.requires_2sa:
         _handle_2sa(api)
 
+    _secure_session_dir()
     keyring.set_password(KEYRING_SERVICE, apple_id, password)
     _save_apple_id(apple_id)
     return api
@@ -127,7 +137,10 @@ def _handle_2fa(api: PyiCloudService) -> None:
     if hasattr(api, "request_2fa_code"):
         api.request_2fa_code()
         print("A verification code was sent to your trusted device.")
-    code = input("Enter the 6-digit code: ").strip()
+    try:
+        code = input("Enter the 6-digit code: ").strip()
+    except EOFError as e:
+        raise RuntimeError("2FA requires an interactive terminal; run icloudz login") from e
     result = api.validate_2fa_code(code)
     if not result:
         raise RuntimeError("Invalid 2FA code")
@@ -140,11 +153,17 @@ def _handle_2sa(api: PyiCloudService) -> None:
     for i, dev in enumerate(devices):
         name = dev.get("deviceName") or dev.get("phoneNumber", f"Device {i}")
         print(f"  [{i}] {name}")
-    idx = int(input("Select device for verification code: ").strip())
+    try:
+        idx = int(input("Select device for verification code: ").strip())
+    except EOFError as e:
+        raise RuntimeError("2FA requires an interactive terminal; run icloudz login") from e
     device = devices[idx]
     if not api.send_verification_code(device):
         raise RuntimeError("Failed to send verification code")
-    code = input("Enter verification code: ").strip()
+    try:
+        code = input("Enter verification code: ").strip()
+    except EOFError as e:
+        raise RuntimeError("2FA requires an interactive terminal; run icloudz login") from e
     if not api.validate_verification_code(device, code):
         raise RuntimeError("Invalid verification code")
 
